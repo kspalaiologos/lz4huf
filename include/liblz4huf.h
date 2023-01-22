@@ -4,6 +4,10 @@
 
 #define LZ4HUF_BS (128 * 1024)
 
+#ifndef LZ4HUF_PUBLIC_API
+    #define LZ4HUF_PUBLIC_API __attribute__((visibility("default")))
+#endif
+
 #include <stdint.h>
 
 /**

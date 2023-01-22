@@ -6,10 +6,10 @@ EXTRA_DIST = LICENSE lz4/LICENSE huff0/LICENSE README.md build-aux/git-version-g
 
 pkgconfig_DATA = lz4huf.pc
 
-include_HEADERS = include/lz4huf.h
+include_HEADERS = include/liblz4huf.h
 
 lib_LTLIBRARIES = liblz4huf.la
-liblz4huf_la_SOURCES = src/liblz4huf.c huff0/entropy_common.c huff0/huf_compress.c huff0/huf_decompress.c lz4/lz4.c lz4/lz4hc.c lz4/lz4frame.c
+liblz4huf_la_SOURCES = src/liblz4huf.c huff0/entropy_common.c huff0/debug.c huff0/hist.c huff0/huf_compress.c huff0/huf_decompress.c huff0/fse_compress.c huff0/fse_decompress.c lz4/lz4.c lz4/lz4hc.c
 liblz4huf_la_LDFLAGS = -no-undefined -version-info 0:0:0
 
 bin_PROGRAMS = lz4huf
