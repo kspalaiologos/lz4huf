@@ -1,26 +1,20 @@
 
 #include <stdlib.h>
 #include <stdint.h>
+#include <assert.h>
 
 #include "lz4hc.h"
 #include "lz4.h"
 #include "huf.h"
-
-#define LZ4HUF_BS (128 * 1024)
-
-struct buffer {
-    uint8_t error;
-    uint8_t * data;
-    uint32_t size;
-};
+#include "liblz4huf.h"
 
 // Wrapper functions over compression.
 
-static struct buffer lz4_compress(const uint8_t * src, uint32_t src_size, uint8_t level) {
+static struct lz4huf_buffer lz4_compress(const uint8_t * src, uint32_t src_size, uint8_t level) {
     uint32_t dst_capacity = LZ4_compressBound(src_size);
     uint8_t * dst = malloc(dst_capacity + sizeof(uint32_t));
     if(dst == NULL) {
-        struct buffer buf;
+        struct lz4huf_buffer buf;
         buf.error = 1;
         buf.data = NULL;
         buf.size = 0;
@@ -33,7 +27,7 @@ static struct buffer lz4_compress(const uint8_t * src, uint32_t src_size, uint8_
     dst[2] = (src_size >> 8) & 0xFF;
     dst[3] = src_size & 0xFF;
 
-    struct buffer buf;
+    struct lz4huf_buffer buf;
     buf.error = 0;
     buf.data = dst;
 
@@ -54,19 +48,19 @@ static struct buffer lz4_compress(const uint8_t * src, uint32_t src_size, uint8_
     return buf;
 }
 
-static struct buffer lz4_decompress(const uint8_t * src, uint32_t src_size) {
+static struct lz4huf_buffer lz4_decompress(const uint8_t * src, uint32_t src_size) {
     uint32_t dst_size = (src[0] << 24) | (src[1] << 16) | (src[2] << 8) | src[3];
 
     uint8_t * dst = malloc(dst_size);
     if(dst == NULL) {
-        struct buffer buf;
+        struct lz4huf_buffer buf;
         buf.error = 1;
         buf.data = NULL;
         buf.size = 0;
         return buf;
     }
 
-    struct buffer buf;
+    struct lz4huf_buffer buf;
     buf.error = 0;
     buf.data = dst;
 
@@ -80,31 +74,38 @@ static struct buffer lz4_decompress(const uint8_t * src, uint32_t src_size) {
     return buf;
 }
 
-static struct buffer huf_compress(const uint8_t * src, uint32_t src_size) {
+static struct lz4huf_buffer huf_compress(const uint8_t * src, uint32_t src_size, uint8_t level) {
     uint32_t dst_capacity = HUF_compressBound(src_size);
     uint8_t * dst = malloc(dst_capacity + 1 + sizeof(uint32_t));
     if(dst == NULL) {
-        struct buffer buf;
+        struct lz4huf_buffer buf;
         buf.error = 1;
         buf.data = NULL;
         buf.size = 0;
         return buf;
     }
 
-    struct buffer buf;
+    struct lz4huf_buffer buf;
     buf.error = 0;
     buf.data = dst;
     buf.size = dst_capacity;
 
-    buf.size = HUF_compress(dst + 1 + sizeof(uint32_t), dst_capacity, src, src_size);
-    if(buf.size == 0) {
-        // Assume that the data simply can't be compressed...
-        // This requires 
+    if(level >= 6) {
+        buf.size = HUF_compress(dst + 1 + sizeof(uint32_t), dst_capacity, src, src_size);
+        if(buf.size == 0) {
+            // Assume that the data simply can't be compressed...
+            // This requires 
+            memcpy(dst + 1, src, src_size);
+            buf.size = src_size;
+            dst[0] = 0; // Uncompressed
+        } else {
+            dst[0] = 1; // Compressed
+        }
+    } else {
+        // Store, don't compress.
         memcpy(dst + 1, src, src_size);
         buf.size = src_size;
         dst[0] = 0; // Uncompressed
-    } else {
-        dst[0] = 1; // Compressed
     }
 
     // Serialise the original size into the buffer.
@@ -116,21 +117,21 @@ static struct buffer huf_compress(const uint8_t * src, uint32_t src_size) {
     return buf;
 }
 
-static struct buffer huf_decompress(const uint8_t * src, uint32_t src_size) {
+static struct lz4huf_buffer huf_decompress(const uint8_t * src, uint32_t src_size) {
     // Read the compressed flag and the original size.
     uint8_t compressed = src[0];
     uint32_t dst_size = (src[1] << 24) | (src[2] << 16) | (src[3] << 8) | src[4];
 
     uint8_t * dst = malloc(dst_size);
     if(dst == NULL) {
-        struct buffer buf;
+        struct lz4huf_buffer buf;
         buf.error = 1;
         buf.data = NULL;
         buf.size = 0;
         return buf;
     }
 
-    struct buffer buf;
+    struct lz4huf_buffer buf;
     buf.error = 0;
     buf.data = dst;
     buf.size = dst_size;
