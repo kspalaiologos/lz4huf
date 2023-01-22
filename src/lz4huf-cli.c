@@ -25,13 +25,13 @@ static void version() {
     fprintf(stdout, "lz4huf " VERSION
                     "\n"
                     "Made by Kamila Szewczyk in 2023 using Yann Collet's LZ4 and Huff0.\n"
-                    "CLI: CC0, LZ4, Huff0: BSD License\n");
+                    "CLI: CC0; LZ4, Huff0: BSD License\n");
 }
 
 static void help() {
     fprintf(stdout,
             "lz4huf - fusion of a fast LZ codec (LZ4) and a fast entropy coder (Huff0).\n"
-            "Usage: lz4huf [-e/-z/-d/-t/-h/-V] [-j jobs] files...\n"
+            "Usage: lz4huf [-e/-z/-d/-t/-h/-V/-1..-12] [-j jobs] files...\n"
             "Operations:\n"
             "  -e/-z, --encode   compress data (default)\n"
             "  -d, --decode      decompress data\n"
@@ -39,8 +39,8 @@ static void help() {
             "  -f, --force       force overwriting output if it already exists\n"
             "  -v, --verbose     verbose mode (display more information)\n"
             "  -V, --version     display version information\n"
-            "Extra flags:\n"
-            "  -j N, --jobs=N    set the amount of parallel threads, set to 0 for automatic {1}\n"
+            "  -p, --parallel    perform parallel compression/decompression\n"
+            "  -1..-12           set compression level (default: 9)\n"
             "\n"
             "Examples:\n"
             "  lz4huf -zj0 < input > output  - creates `output` from `input`"
@@ -64,22 +64,110 @@ static int is_dir(const char * path) {
 
 enum { MODE_COMPRESS, MODE_EXPAND };
 
-static void process(int mode, FILE * input, FILE * output, int force, int verbose, int jobs) {
-    // TODO...
+static void process(int mode, FILE * input, FILE * output, int force, int verbose, int jobs, int level) {
+    if(mode == MODE_COMPRESS) {
+        if(jobs == 1) {
+            size_t n_read = 0;
+            char * buffer = malloc(32 * 1024 * 1024);
+            if(!buffer) {
+                fprintf(stderr, "lz4huf: memory exhausted\n");
+                exit(1);
+            }
+
+            while((n_read = fread(buffer, 1, 32 * 1024 * 1024, input)) > 0) {
+                struct lz4huf_buffer b = lz4huf_compress(buffer, n_read, level);
+                if(b.size == 0) {
+                    fprintf(stderr, "lz4huf: compression failed\n");
+                    exit(1);
+                }
+                if(fwrite(b.data, 1, b.size, output) != b.size) {
+                    fprintf(stderr, "lz4huf: write error\n");
+                    exit(1);
+                }
+                free(b.data);
+            }
+
+            free(buffer);
+        } else {
+            size_t n_read = 0;
+            char * buffer = malloc(jobs * LZ4HUF_BS);
+            if(!buffer) {
+                fprintf(stderr, "lz4huf: memory exhausted\n");
+                exit(1);
+            }
+
+            while((n_read = fread(buffer, 1, jobs * LZ4HUF_BS, input)) > 0) {
+                struct lz4huf_buffer b = lz4huf_compress_par(buffer, n_read, level);
+                if(b.size == 0) {
+                    fprintf(stderr, "lz4huf: compression failed\n");
+                    exit(1);
+                }
+                if(fwrite(b.data, 1, b.size, output) != b.size) {
+                    fprintf(stderr, "lz4huf: write error\n");
+                    exit(1);
+                }
+                free(b.data);
+            }
+
+            free(buffer);
+        }
+    } else {
+        char * compressed = malloc(LZ4HUF_BS + 256);
+        if(!compressed) {
+            fprintf(stderr, "lz4huf: memory exhausted\n");
+            exit(1);
+        }
+        
+        // Loop on the blocks.
+        while(!feof(input)) {
+            uint32_t compressed_len = 0;
+
+            // Read the compressed length.
+            compressed_len |= fgetc(input) << 0;
+            compressed_len |= fgetc(input) << 8;
+            compressed_len |= fgetc(input) << 16;
+            compressed_len |= fgetc(input) << 24;
+
+            if(compressed_len == 0) break;
+            if(ferror(input)) {
+                fprintf(stderr, "lz4huf: read error\n");
+                exit(1);
+            }
+
+            // Read the compressed data.
+            if(fread(compressed, 1, compressed_len, input) != compressed_len) {
+                fprintf(stderr, "lz4huf: read error\n");
+                exit(1);
+            }
+
+            // Decompress the data.
+            struct lz4huf_buffer b = lz4huf_decompress(compressed, compressed_len);
+
+            // Write the decompressed data.
+            if(fwrite(b.data, 1, b.size, output) != b.size) {
+                fprintf(stderr, "lz4huf: write error\n");
+                exit(1);
+            }
+
+            free(b.data);
+        }
+
+        free(compressed);
+    }
 }
 
 int main(int argc, char * argv[]) {
-    const char * short_options = "defhj:vVz";
+    const char * short_options = "defhpvVz0123456789";
     static struct option long_options[] = { { "encode", no_argument, 0, 'e' },
                                             { "decode", no_argument, 0, 'd' },
                                             { "force", no_argument, 0, 'f' },
                                             { "help", no_argument, 0, 'h' },
                                             { "version", no_argument, 0, 'V' },
                                             { "verbose", no_argument, 0, 'v' },
-                                            { "jobs", required_argument, 0, 'j' },
+                                            { "parallel", no_argument, 0, 'p' },
                                             { 0, 0, 0, 0 } };
     int mode = MODE_COMPRESS;
-    int force = 0, verbose = 0, jobs = 1;
+    int force = 0, verbose = 0, jobs = 1, level = 9;
     while(1) {
         int option_index = 0;
         int c = getopt_long(argc, argv, short_options, long_options, &option_index);
@@ -104,30 +192,51 @@ int main(int argc, char * argv[]) {
             case 'V':
                 version();
                 return 0;
-            case 'j':
-                if (!is_numeric(optarg) || atoi(optarg) < 0) {
-                    fprintf(stderr, "lz4huf: invalid amount of jobs: %s\n", optarg);
-                    return 1;
-                }
-                jobs = atoi(optarg);
+            case 'p':
+                jobs = omp_get_max_threads();
                 break;
             default:
                 fprintf(stderr, "Try `lz4huf --help` for more information.\n");
                 return 1;
+            case '0': case '1': case '2': case '3': case '4':
+            case '5': case '6': case '7': case '8': case '9':
+                char * numarg = argv[optind - 1];
+                if (numarg[0] == '-' && numarg[1] == c && numarg[2] == '\0') {
+                    level = '0' - c;
+                } else if ((numarg = argv[optind]) != NULL && numarg[1] == c) {
+                    char *ep;
+                    int numoptind = optind;
+
+                    level = strtol(numarg, &ep, 10);
+                    if (*ep != '\0') {
+                        fprintf(stderr, "lz4huf: illegal number: %s\n", numarg);
+                        return 1;
+                    }
+
+                    while (optind == numoptind) {
+                        c = getopt(argc, argv, "0123456789");
+                        assert(c >= '0' && c <= '9');
+                    }
+                } else {
+                    fprintf(stderr, "lz4huf: number after other options: %s\n", numarg);
+                    return 1;
+                }
+                break;
         }
+    }
+
+    if(level < 0 || level > 12) {
+        fprintf(stderr, "lz4huf: invalid compression level: %d\n", level);
     }
 
 #if defined(__MSVCRT__)
     setmode(STDIN_FILENO, O_BINARY);
     setmode(STDOUT_FILENO, O_BINARY);
 #endif
-
-    if(jobs == 0)
-        jobs = omp_get_max_threads();
     
     if (optind == argc) {
         // no files specified, use stdin/stdout
-        process(mode, stdin, stdout, force, verbose, jobs);
+        process(mode, stdin, stdout, force, verbose, jobs, level);
     } else {
         // process files
         for (int i = optind; i < argc; i++) {
@@ -176,7 +285,7 @@ int main(int argc, char * argv[]) {
                 return 1;
             }
 
-            process(mode, input, output, force, verbose, jobs);
+            process(mode, input, output, force, verbose, jobs, level);
         }
     }
 

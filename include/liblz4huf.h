@@ -78,13 +78,4 @@ struct lz4huf_buffer lz4huf_decompress(const uint8_t * src, uint32_t src_size);
  */
 struct lz4huf_buffer lz4huf_compress_par(const uint8_t * src, uint32_t src_size, uint8_t level);
 
-/**
- * @brief Decompresses a buffer compressed with lz4huf_compress or lz4huf_compress_par in parallel.
- * 
- * @param src The source buffer.
- * @param src_size The size of the source buffer.
- * @return struct lz4huf_buffer The decompressed buffer.
- */
-struct lz4huf_buffer lz4huf_decompress_par(const uint8_t * src, uint32_t src_size);
-
 #endif
