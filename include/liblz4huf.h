@@ -32,7 +32,7 @@ struct lz4huf_buffer {
 
 /**
  * @brief Compresses a buffer using LZ4 and Huffman encoding.
- * 
+ *
  * @param src The source buffer.
  * @param src_size The size of the source buffer. Must not exceed LZ4HUF_BS.
  * @param level The compression level. Must be between 0 and 12.
@@ -42,7 +42,7 @@ struct lz4huf_buffer lz4huf_compress_blk(const uint8_t * src, uint32_t src_size,
 
 /**
  * @brief Decompresses a buffer compressed with lz4huf_compress.
- * 
+ *
  * @param src The source buffer.
  * @param src_size The size of the source buffer.
  * @return struct lz4huf_buffer The decompressed buffer.
@@ -51,7 +51,7 @@ struct lz4huf_buffer lz4huf_decompress_blk(const uint8_t * src, uint32_t src_siz
 
 /**
  * @brief Compresses a buffer of arbitrary size using LZ4 and Huffman encoding.
- * 
+ *
  * @param src The source buffer.
  * @param src_size The size of the source buffer.
  * @param level The compression level. Must be between 0 and 12.
@@ -61,7 +61,7 @@ struct lz4huf_buffer lz4huf_compress(const uint8_t * src, uint32_t src_size, uin
 
 /**
  * @brief Decompresses a buffer compressed with lz4huf_compress.
- * 
+ *
  * @param src The source buffer.
  * @param src_size The size of the source buffer.
  * @return struct lz4huf_buffer The decompressed buffer.
@@ -70,7 +70,7 @@ struct lz4huf_buffer lz4huf_decompress(const uint8_t * src, uint32_t src_size);
 
 /**
  * @brief Compresses a buffer of arbitrary size in parallel using LZ4 and Huffman encoding.
- * 
+ *
  * @param src The source buffer.
  * @param src_size The size of the source buffer.
  * @param level The compression level. Must be between 0 and 12.
