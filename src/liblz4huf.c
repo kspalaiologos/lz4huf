@@ -154,7 +154,7 @@ static struct lz4huf_buffer huf_decompress(const uint8_t * src, uint32_t src_siz
 // Single block compression
 
 LZ4HUF_PUBLIC_API struct lz4huf_buffer lz4huf_compress_blk(const uint8_t * src, uint32_t src_size, uint8_t level) {
-    assert(src_size < LZ4HUF_BS && level < 12 && level > 0);
+    assert(src_size <= LZ4HUF_BS && level <= 12 && level > 0);
 
     struct lz4huf_buffer buf = lz4_compress(src, src_size, level);
     if(buf.error) {
