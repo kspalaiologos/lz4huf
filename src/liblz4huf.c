@@ -250,7 +250,7 @@ LZ4HUF_PUBLIC_API struct lz4huf_buffer lz4huf_decompress(const uint8_t * src, ui
         uint32_t compressed_len = (src[in_ptr++] << 24) | (src[in_ptr++] << 16) | (src[in_ptr++] << 8) | src[in_ptr++];
 
         struct lz4huf_buffer buf2 = lz4huf_decompress_blk(src + in_ptr, compressed_len);
-        if(buf2.error) {
+        if(buf2.error || buf2.size > LZ4HUF_BS) {
             buf.error = 1;
             free(buf.data);
             buf.data = NULL;
@@ -271,10 +271,9 @@ LZ4HUF_PUBLIC_API struct lz4huf_buffer lz4huf_decompress(const uint8_t * src, ui
 // Parallel multi block compression using OpenMP.
 
 LZ4HUF_PUBLIC_API struct lz4huf_buffer lz4huf_compress_par(const uint8_t * src, uint32_t src_size, uint8_t level) {
-    uint32_t num_blocks = (src_size + LZ4HUF_BS - 1) / LZ4HUF_BS;
-    uint32_t dst_capacity = num_blocks * LZ4HUF_BS + num_blocks * sizeof(uint32_t);
-    uint8_t * dst = malloc(dst_capacity);
-    if(dst == NULL) {
+    int num_blocks = (src_size + LZ4HUF_BS - 1) / LZ4HUF_BS;
+    struct lz4huf_buffer * bufs = malloc(num_blocks * sizeof(struct lz4huf_buffer));
+    if(bufs == NULL) {
         struct lz4huf_buffer buf;
         buf.error = 1;
         buf.data = NULL;
@@ -282,53 +281,39 @@ LZ4HUF_PUBLIC_API struct lz4huf_buffer lz4huf_compress_par(const uint8_t * src, 
         return buf;
     }
 
-    struct lz4huf_buffer buf;
-    buf.error = 0;
-    buf.data = dst;
-    buf.size = dst_capacity;
-
-    int error = 0;
-
     #pragma omp parallel for
-    for(uint32_t i = 0; i < num_blocks; i++) {
+    for(int i = 0; i < num_blocks; i++) {
         uint32_t block_size = LZ4HUF_BS;
         if(i == num_blocks - 1) {
             block_size = src_size - (num_blocks - 1) * LZ4HUF_BS;
         }
 
-        struct lz4huf_buffer buf2 = lz4huf_compress_blk(src + i * LZ4HUF_BS, block_size, level);
-        if(buf2.error) {
-            error = 1;
+        bufs[i] = lz4huf_compress_blk(src + i * LZ4HUF_BS, block_size, level);
+    }
+
+    uint32_t dst_capacity = 0;
+    for(int i = 0; i < num_blocks; i++) {
+        if(bufs[i].error) {
+            for(int j = 0; j < num_blocks; j++) {
+                free(bufs[j].data);
+            }
+            free(bufs);
+            struct lz4huf_buffer buf;
+            buf.error = 1;
+            buf.data = NULL;
+            buf.size = 0;
+            return buf;
         }
 
-        // Serialise the compressed len.
-        dst[i * LZ4HUF_BS + i * sizeof(uint32_t)] = (buf2.size >> 24) & 0xFF;
-        dst[i * LZ4HUF_BS + i * sizeof(uint32_t) + 1] = (buf2.size >> 16) & 0xFF;
-        dst[i * LZ4HUF_BS + i * sizeof(uint32_t) + 2] = (buf2.size >> 8) & 0xFF;
-        dst[i * LZ4HUF_BS + i * sizeof(uint32_t) + 3] = buf2.size & 0xFF;
-
-        memcpy(dst + i * LZ4HUF_BS + i * sizeof(uint32_t) + 4, buf2.data, buf2.size);
-        free(buf2.data);
+        dst_capacity += bufs[i].size + sizeof(uint32_t);
     }
 
-    if(error) {
-        buf.error = 1;
-        free(buf.data);
-        buf.data = NULL;
-        buf.size = 0;
-        return buf;
-    }
-
-    buf.size = num_blocks * LZ4HUF_BS + num_blocks * sizeof(uint32_t);
-
-    return buf;
-}
-
-LZ4HUF_PUBLIC_API struct lz4huf_buffer lz4huf_decompress_par(const uint8_t * src, uint32_t src_size) {
-    uint32_t num_blocks = (src_size + LZ4HUF_BS - 1) / LZ4HUF_BS;
-    uint32_t dst_capacity = num_blocks * LZ4HUF_BS;
     uint8_t * dst = malloc(dst_capacity);
     if(dst == NULL) {
+        for(int j = 0; j < num_blocks; j++) {
+            free(bufs[j].data);
+        }
+        free(bufs);
         struct lz4huf_buffer buf;
         buf.error = 1;
         buf.data = NULL;
@@ -341,30 +326,108 @@ LZ4HUF_PUBLIC_API struct lz4huf_buffer lz4huf_decompress_par(const uint8_t * src
     buf.data = dst;
     buf.size = dst_capacity;
 
-    int error = 0;
+    uint32_t out_ptr = 0;
 
-    #pragma omp parallel for
-    for(uint32_t i = 0; i < num_blocks; i++) {
-        uint32_t compressed_len = (src[i * LZ4HUF_BS + i * sizeof(uint32_t)] << 24) | (src[i * LZ4HUF_BS + i * sizeof(uint32_t) + 1] << 16) | (src[i * LZ4HUF_BS + i * sizeof(uint32_t) + 2] << 8) | src[i * LZ4HUF_BS + i * sizeof(uint32_t) + 3];
+    for(int i = 0; i < num_blocks; i++) {
+        // Serialise the compressed len.
+        dst[out_ptr++] = (bufs[i].size >> 24) & 0xFF;
+        dst[out_ptr++] = (bufs[i].size >> 16) & 0xFF;
+        dst[out_ptr++] = (bufs[i].size >> 8) & 0xFF;
+        dst[out_ptr++] = bufs[i].size & 0xFF;
 
-        struct lz4huf_buffer buf2 = lz4huf_decompress_blk(src + i * LZ4HUF_BS + i * sizeof(uint32_t) + 4, compressed_len);
-        if(buf2.error) {
-            error = 1;
-        }
-
-        memcpy(dst + i * LZ4HUF_BS, buf2.data, buf2.size);
-        free(buf2.data);
+        memcpy(dst + out_ptr, bufs[i].data, bufs[i].size);
+        free(bufs[i].data);
+        out_ptr += bufs[i].size;
     }
 
-    if(error) {
+    free(bufs);
+
+    buf.size = out_ptr;
+    
+    return buf;
+}
+
+LZ4HUF_PUBLIC_API struct lz4huf_buffer lz4huf_decompress_par(const uint8_t * src, uint32_t src_size) {
+    // Count the number of blocks.
+    uint32_t num_blocks = 0, i;
+    uint64_t in_ptr = 0;
+    while(in_ptr < src_size) {
+        uint32_t compressed_len = (src[in_ptr++] << 24) | (src[in_ptr++] << 16) | (src[in_ptr++] << 8) | src[in_ptr++];
+        in_ptr += compressed_len;
+        num_blocks++;
+    }
+
+    uint32_t * offsets = malloc(num_blocks * sizeof(uint32_t));
+    in_ptr = 0; i = 0;
+    while(in_ptr <= src_size) {
+        offsets[i++] = in_ptr;
+
+        uint32_t compressed_len = (src[in_ptr++] << 24) | (src[in_ptr++] << 16) | (src[in_ptr++] << 8) | src[in_ptr++];
+        in_ptr += compressed_len;
+    }
+
+    struct lz4huf_buffer * bufs = malloc(num_blocks * sizeof(struct lz4huf_buffer));
+    if(bufs == NULL) {
+        struct lz4huf_buffer buf;
         buf.error = 1;
-        free(buf.data);
         buf.data = NULL;
         buf.size = 0;
         return buf;
     }
 
-    buf.size = num_blocks * LZ4HUF_BS;
+    #pragma omp parallel for
+    for(int i = 0; i < num_blocks; i++) {
+        uint32_t compressed_len = (src[offsets[i]] << 24) | (src[offsets[i] + 1] << 16) | (src[offsets[i] + 2] << 8) | src[offsets[i] + 3];
+        bufs[i] = lz4huf_decompress_blk(src + offsets[i] + sizeof(uint32_t), compressed_len);
+    }
+
+    free(offsets);
+
+    uint32_t dst_capacity = 0;
+
+    for(int i = 0; i < num_blocks; i++) {
+        if(bufs[i].error) {
+            for(int j = 0; j < num_blocks; j++) {
+                free(bufs[j].data);
+            }
+            free(bufs);
+            struct lz4huf_buffer buf;
+            buf.error = 1;
+            buf.data = NULL;
+            buf.size = 0;
+            return buf;
+        }
+
+        dst_capacity += bufs[i].size;
+    }
+
+    uint8_t * dst = malloc(dst_capacity);
+    if(dst == NULL) {
+        for(int j = 0; j < num_blocks; j++) {
+            free(bufs[j].data);
+        }
+        free(bufs);
+        struct lz4huf_buffer buf;
+        buf.error = 1;
+        buf.data = NULL;
+        buf.size = 0;
+        return buf;
+    }
+
+    struct lz4huf_buffer buf;
+    buf.error = 0;
+    buf.data = dst;
+    buf.size = dst_capacity;
+
+    uint32_t out_ptr = 0;
+
+    for(int i = 0; i < num_blocks; i++) {
+        memcpy(dst + out_ptr, bufs[i].data, bufs[i].size);
+        free(bufs[i].data);
+        out_ptr += bufs[i].size;
+    }
+
+    free(bufs);
 
     return buf;
 }

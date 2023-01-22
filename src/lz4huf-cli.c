@@ -18,7 +18,7 @@ int main(int argc, char * argv[]) {
     in_buf = malloc(in_size);
     fread(in_buf, 1, in_size, in);
 
-    out_buf = lz4huf_compress(in_buf, in_size, 12);
+    out_buf = lz4huf_compress_par(in_buf, in_size, 12);
 
     fwrite(out_buf.data, 1, out_buf.size, out);
 
