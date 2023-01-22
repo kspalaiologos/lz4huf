@@ -32,3 +32,4 @@ autom4te.cache/
 !/build-aux/ax_transformed_package_name.m4
 !/build-aux/git-version-gen
 lz4huf.pc
+lz4huf
