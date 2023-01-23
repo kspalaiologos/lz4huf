@@ -244,9 +244,6 @@ int main(int argc, char * argv[]) {
             case 'p':
                 jobs = omp_get_max_threads();
                 break;
-            default:
-                fprintf(stderr, "Try `lz4huf --help` for more information.\n");
-                return 1;
             case '0':
             case '1':
             case '2':
@@ -279,6 +276,9 @@ int main(int argc, char * argv[]) {
                     return 1;
                 }
                 break;
+            default:
+                fprintf(stderr, "Try `lz4huf --help` for more information.\n");
+                return 1;
         }
     }
 

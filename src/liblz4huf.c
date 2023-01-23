@@ -41,7 +41,7 @@ static struct lz4huf_buffer lz4_compress(const uint8_t * src, uint32_t src_size,
 
     buf.size += sizeof(uint32_t);
 
-    if (buf.size == 0) {
+    if (buf.size <= 0) {
         buf.error = 1;
         free(buf.data);
         buf.data = NULL;
@@ -67,7 +67,7 @@ static struct lz4huf_buffer lz4_decompress(const uint8_t * src, uint32_t src_siz
     buf.data = dst;
 
     buf.size = LZ4_decompress_safe(src + sizeof(uint32_t), dst, src_size - sizeof(uint32_t), dst_size);
-    if (buf.size == 0) {
+    if (buf.size <= 0) {
         buf.error = 1;
         free(buf.data);
         buf.data = NULL;
@@ -78,7 +78,7 @@ static struct lz4huf_buffer lz4_decompress(const uint8_t * src, uint32_t src_siz
 
 static struct lz4huf_buffer huf_compress(const uint8_t * src, uint32_t src_size, uint8_t level) {
     uint32_t dst_capacity = HUF_compressBound(src_size);
-    uint8_t * dst = malloc(dst_capacity + 1 + sizeof(uint32_t));
+    uint8_t * dst = malloc(dst_capacity + 5);
     if (dst == NULL) {
         struct lz4huf_buffer buf;
         buf.error = 1;
@@ -93,11 +93,10 @@ static struct lz4huf_buffer huf_compress(const uint8_t * src, uint32_t src_size,
     buf.size = dst_capacity;
 
     if (level >= 6) {
-        buf.size = HUF_compress(dst + 1 + sizeof(uint32_t), dst_capacity, src, src_size);
-        if (buf.size == 0) {
+        buf.size = HUF_compress(dst + 5, dst_capacity, src, src_size);
+        if (buf.size <= 0) {
             // Assume that the data simply can't be compressed...
-            // This requires
-            memcpy(dst + 1, src, src_size);
+            memcpy(dst + 1 + sizeof(uint32_t), src, src_size);
             buf.size = src_size;
             dst[0] = 0;  // Uncompressed
         } else {
@@ -105,10 +104,12 @@ static struct lz4huf_buffer huf_compress(const uint8_t * src, uint32_t src_size,
         }
     } else {
         // Store, don't compress.
-        memcpy(dst + 1, src, src_size);
+        memcpy(dst + 1 + sizeof(uint32_t), src, src_size);
         buf.size = src_size;
         dst[0] = 0;  // Uncompressed
     }
+
+    buf.size += 5;
 
     // Serialise the original size into the buffer.
     dst[1] = (src_size >> 24) & 0xFF;
@@ -139,14 +140,14 @@ static struct lz4huf_buffer huf_decompress(const uint8_t * src, uint32_t src_siz
     buf.size = dst_size;
 
     if (compressed) {
-        buf.size = HUF_decompress(dst, dst_size, src + 1 + sizeof(uint32_t), src_size - (1 + sizeof(uint32_t)));
-        if (buf.size == 0) {
+        buf.size = HUF_decompress(dst, dst_size, src + 5, src_size - 5);
+        if (buf.size <= 0) {
             buf.error = 1;
             free(buf.data);
             buf.data = NULL;
         }
     } else {
-        memcpy(dst, src + 1, dst_size);
+        memcpy(dst, src + 5, dst_size);
     }
 
     return buf;
@@ -165,14 +166,10 @@ LZ4HUF_PUBLIC_API struct lz4huf_buffer lz4huf_compress_blk(const uint8_t * src, 
     struct lz4huf_buffer buf2 = huf_compress(buf.data, buf.size, level);
     free(buf.data);
 
-    printf("Produced a compressed block of size %d that starts with %02x %02x %02x %02x %02x\n", buf2.size, buf2.data[0], buf2.data[1], buf2.data[2], buf2.data[3], buf2.data[4]);
-
     return buf2;
 }
 
 LZ4HUF_PUBLIC_API struct lz4huf_buffer lz4huf_decompress_blk(const uint8_t * src, uint32_t src_size) {
-    printf("Received a compressed block of size %d that starts with %02x %02x %02x %02x %02x\n", src_size, src[0], src[1], src[2], src[3], src[4]);
-
     struct lz4huf_buffer buf = huf_decompress(src, src_size);
     if (buf.error) {
         return buf;

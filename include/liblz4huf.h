@@ -27,7 +27,7 @@ struct lz4huf_buffer {
     /**
      * @brief The size of the data buffer.
      */
-    uint32_t size;
+    int32_t size;
 };
 
 /**
