@@ -1,12 +1,12 @@
 
 #include <assert.h>
 #include <ctype.h>
+#include <errno.h>
 #include <inttypes.h>
 #include <omp.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <errno.h>
 #include <sys/stat.h>
 
 #ifdef __linux__
@@ -73,8 +73,10 @@ static int is_dir(const char * path) {
 
 enum { MODE_COMPRESS, MODE_EXPAND };
 
-static void process(int mode, FILE * input, FILE * output, int force, int verbose, int jobs, int level) {
+static void process(int mode, const char * in_name, FILE * input, FILE * output, int force,
+                    int verbose, int jobs, int level) {
     if (mode == MODE_COMPRESS) {
+        size_t total_read = 0, total_written = 0;
         if (jobs == 1) {
             size_t n_read = 0;
             char * buffer = malloc(32 * 1024 * 1024);
@@ -93,6 +95,8 @@ static void process(int mode, FILE * input, FILE * output, int force, int verbos
                     fprintf(stderr, "lz4huf: write error: %s\n", strerror(errno));
                     exit(1);
                 }
+                total_read += n_read;
+                total_written += b.size;
                 free(b.data);
             }
 
@@ -115,12 +119,20 @@ static void process(int mode, FILE * input, FILE * output, int force, int verbos
                     fprintf(stderr, "lz4huf: write error: %s\n", strerror(errno));
                     exit(1);
                 }
+                total_read += n_read;
+                total_written += b.size;
                 free(b.data);
             }
 
             free(buffer);
         }
+        if (verbose) {
+            fprintf(stderr, "%s\t%" PRIu64 " -> %" PRIu64 " bytes, %.2f%%, %.2f bpb\n", in_name, total_read, total_written,
+                    (double)total_written * 100.0 / total_read, (double)total_written * 8.0 / total_read);
+        }
     } else {
+        size_t total_read = 0, total_written = 0;
+
         char * compressed = malloc(LZ4HUF_BS + 256);
         if (!compressed) {
             fprintf(stderr, "lz4huf: memory exhausted\n");
@@ -143,12 +155,12 @@ static void process(int mode, FILE * input, FILE * output, int force, int verbos
                 exit(1);
             }
 
+            total_read += 4;
+
             compressed_len |= num[0] << 24;
             compressed_len |= num[1] << 16;
             compressed_len |= num[2] << 8;
             compressed_len |= num[3];
-
-            printf("compressed_len: %d\n", compressed_len);
 
             if (compressed_len == 0) break;
 
@@ -158,14 +170,14 @@ static void process(int mode, FILE * input, FILE * output, int force, int verbos
                 exit(1);
             }
 
+            total_read += compressed_len;
+
             // Decompress the data.
             struct lz4huf_buffer b = lz4huf_decompress_blk(compressed, compressed_len);
-            if(b.error) {
+            if (b.error) {
                 fprintf(stderr, "lz4huf: decompression failed\n");
                 exit(1);
             }
-
-            printf("decompressed_len: %d\n", b.size);
 
             // Write the decompressed data.
             if (fwrite(b.data, 1, b.size, output) != b.size) {
@@ -173,10 +185,17 @@ static void process(int mode, FILE * input, FILE * output, int force, int verbos
                 exit(1);
             }
 
+            total_written += b.size;
+
             free(b.data);
         }
 
         free(compressed);
+
+        if (verbose) {
+            fprintf(stderr, "%s\t%" PRIu64 " <- %" PRIu64 " bytes, %.2f%%, %.2f bpb\n", in_name, total_written, total_read,
+                    (double)total_read * 100.0 / total_written, (double)total_read * 8.0 / total_written);
+        }
     }
 }
 
@@ -294,7 +313,7 @@ int main(int argc, char * argv[]) {
 
     if (optind == argc) {
         // no files specified, use stdin/stdout
-        process(mode, stdin, stdout, force, verbose, jobs, level);
+        process(mode, "stdin", stdin, stdout, force, verbose, jobs, level);
         close_out_file(stdout);
     } else {
         // process files
@@ -344,7 +363,7 @@ int main(int argc, char * argv[]) {
                 return 1;
             }
 
-            process(mode, input, output, force, verbose, jobs, level);
+            process(mode, filename, input, output, force, verbose, jobs, level);
 
             close_out_file(output);
             fclose(input);
