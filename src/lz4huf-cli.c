@@ -144,7 +144,7 @@ static void process(int mode, const char * in_name, FILE * input, FILE * output,
             uint32_t compressed_len = 0;
 
             // Read the compressed length.
-            char num[4];
+            unsigned char num[4];
             size_t nread = fread(num, 1, 4, input);
             if (nread == 0) {
                 break;
