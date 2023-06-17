@@ -275,7 +275,7 @@ int main(int argc, char * argv[]) {
             case '9':
                 char * numarg = argv[optind - 1];
                 if (numarg[0] == '-' && numarg[1] == c && numarg[2] == '\0') {
-                    level = '0' - c;
+                    level = c - '0';
                 } else if ((numarg = argv[optind]) != NULL && numarg[1] == c) {
                     char * ep;
                     int numoptind = optind;
